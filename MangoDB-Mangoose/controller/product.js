@@ -47,6 +47,7 @@ exports.updateSomeFeatureProduct = async (req, res) => {
     res.status(201).json(doc);
 }
 
+// Delete Only some things(Delete)
 exports.deleteProduct = async (req, res) => {
     const id = req.params.id; 
     const doc = await Product.findOneAndDelete({ _id: id });    
