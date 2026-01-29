@@ -6,6 +6,7 @@ const router = express.Router();
 router
   .post('/', productController.createProduct)
   .get('/ssr', productController.getProductSSR)
+  .get('/add', productController.getAddForm)
   .get('/', productController.getProduct)
   .get('/:id', productController.getProductById)
   .put('/:id', productController.updateAllFeatureProduct)
