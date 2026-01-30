@@ -1334,7 +1334,3 @@ socket.on('serverMsg',(data)=>{  // listener to server-side events 'serverMsg'
   - Display messages from user and others in a simple html list format. 
   - You can align incoming  messages from other users to **left** and your own   messages to **right** side.
   - Optionally, you can use database to store the old text messages in case you want old chat to be reloaded. 
-
-
------
-**------------END OF COURSE---------------------**
