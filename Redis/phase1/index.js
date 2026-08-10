@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import dbConnection from "./config/db.js";
 import User from "./model/user.model.js";
 import Redis from "ioredis";
+import { ratelimit } from "./middleware/ratelimit.js";
 dotenv.config();
 
 const app = express();
@@ -12,7 +13,8 @@ await dbConnection();
 
 const PORT = process.env.PORT || 8080;
 
-const redis = new Redis(process.env.REDIS_URL);
+export const redis = new Redis(process.env.REDIS_URL);
+
 redis.on("error", (err) => {
   console.error("Redis Error:", err.message);
 });
@@ -33,7 +35,7 @@ app.post("/create" , async (req, res) => {
     return res.status(201).json(user);
 });
 
-app.get("/get", async (req, res) => {
+app.get("/get", ratelimit, async (req, res) => {
     const user = await User.find({});
 
     return res.status(200).json(user);
