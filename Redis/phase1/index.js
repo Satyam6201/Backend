@@ -24,6 +24,7 @@ app.get("/", (req, res) => {
 
 app.post("/create" , async (req, res) => {
     const {name, email, password} = req.body;
+    await redis.del("user:all");
 
     const user = await User.create({
         name, email, password
@@ -50,6 +51,32 @@ app.get("/get-redis", async (req, res) => {
     await redis.set("user:all", JSON.stringify(user));
     return res.status(200).json(user);
 });
+
+app.post("/send-opt", async (req, res) => {
+    const { email } = req.body;
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    await redis.set(`otp:${email}`, otp, "EX",30); // ex means expire 30 means 30 sec
+    return res.json({ otp });
+});
+
+app.post("/verify-otp", async (req, res) => {
+    const { email, otp } = req.body;
+
+    const cachedOtp = await redis.get(`otp:${email}`);
+
+    if (!cachedOtp) {
+        return res.status(400).json({ message: "Otp is not found or expire"});
+    }
+
+    if (cachedOtp == otp) {
+        return res.status(400).json({ message: "Otp is not found"});
+    }
+ 
+    return res.json({ message: "Otp is verify" });
+})
+
 
 app.listen(PORT, () => {
     console.log(`Our port is running on ${PORT}`);
