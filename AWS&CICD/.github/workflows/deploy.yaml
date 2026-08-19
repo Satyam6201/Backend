@@ -10,5 +10,11 @@ jobs:
 
   steps: 
     - name: checkout code
-
       uses: actions/checkout@v6
+    - name: deploy vis ssh
+      uses: appleboy/ssh-action@v1
+      with: 
+        host: ${{secrets.SSH_HOST}}
+        username: ubuntu
+        key: ${{secrets.SSH_KEY}}
+        script: 
