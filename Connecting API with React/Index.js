@@ -26,6 +26,3 @@ server.use('/users',userRouter.router);
 server.listen(8080, () => {
   console.log('server started');
 });
-
-// Satyam62
-// mongodb+srv://satyamkmishraa:<Satyam62>@cluster0.3huxq3l.mongodb.net/?appName=Cluster0
