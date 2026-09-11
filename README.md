@@ -1325,69 +1325,139 @@ socket.on('serverMsg',(data)=>{  // listener to server-side events 'serverMsg'
 
 
 
-# Kafka
-## Prerequisite
-- Knowledge
-  - Node.JS Intermediate level
-  - Experience with designing distributed systems
-- Tools
-  - Node.js: [Download Node.JS](https://nodejs.org/en)
-  - Docker: [Download Docker](https://www.docker.com)
-  - VsCode: [Download VSCode](https://code.visualstudio.com)
+# Chapter: Apache Kafka & Distributed Event Streaming
 
-## Commands
-- Start Zookeper Container and expose PORT `2181`.
-```bash
-docker run -p 2181:2181 zookeeper
-```
-- Start Kafka Container, expose PORT `9092` and setup ENV variables.
-```bash
-docker run -p 9092:9092 \
--e KAFKA_ZOOKEEPER_CONNECT=<PRIVATE_IP>:2181 \
--e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://<PRIVATE_IP>:9092 \
--e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
-confluentinc/cp-kafka
-```
+## 1. What is Apache Kafka?
+**Apache Kafka** is an open-source distributed event store and stream-processing platform. Originally developed by LinkedIn and open-sourced under the Apache Software Foundation, Kafka is designed to handle trillions of events per day with ultra-low latency, fault tolerance, and high horizontal scalability.
 
-## Code
-`client.js`
+Unlike traditional message brokers that delete messages after consumption, Kafka acts as an **immutable, append-only distributed commit log**.
+
+---
+
+## 2. Core Concepts & Architecture
+
+### 🧱 Building Blocks
+- **Broker**: A single Kafka server that receives, stores, and serves messages. A collection of brokers forms a **Kafka Cluster**.
+- **Topic**: A named stream of records (similar to a database table or a folder in a filesystem). Examples: `order-events`, `rider-updates`, `user-activity`.
+- **Partition**: Topics are divided into one or more partitions. 
+  - Partitions are the unit of parallelism in Kafka.
+  - Messages within a partition are strictly ordered and assigned an immutable, incrementing ID called an **Offset**.
+- **Offset**: The sequential index of each message within a partition. Consumers maintain their current offset to resume reading where they left off.
+- **Producer**: An application that publishes (writes) events to Kafka topics. Producers decide which partition an event belongs to (via partition key or custom logic).
+- **Consumer**: An application that subscribes to (reads) topics and processes message streams.
+- **Consumer Group**: A set of consumers cooperating to consume data from topics.
+  - Each partition is assigned to **only one consumer** within a group.
+  - Adding more consumers to a group scales read throughput horizontally.
+  - If a consumer crashes, Kafka automatically triggers a **Rebalance** to reassign its partitions to remaining active consumers.
+- **Replication Factor**: The number of copies of each partition across different brokers for high availability and fault tolerance.
+- **KRaft vs. Zookeeper**:
+  - **Legacy Kafka**: Relied on Apache Zookeeper for cluster metadata, broker discovery, and leader election.
+  - **Modern Kafka (v3.3+)**: Uses **KRaft** (Kafka Raft metadata mode), running Kafka as a self-contained, standalone cluster without needing Zookeeper.
+
+---
+
+## 3. Real-World Uses & Industry Applications
+
+Kafka is the backbone of modern distributed systems. Typical use cases include:
+
+1. **Event-Driven Microservices (Decoupling)**:
+   - When a user places an order, the `Order Service` publishes an `OrderPlaced` event. The `Payment Service`, `Inventory Service`, and `Notification Service` can consume and process this event independently at their own pace without blocking each other.
+2. **Activity Tracking & Clickstream Processing**:
+   - LinkedIn, Netflix, and Uber ingest billions of user clicks, searches, and page interactions in real time to feed recommendation algorithms and analytics.
+3. **Log Aggregation & Observability**:
+   - Collecting log files and traces across hundreds of distributed microservices into a single, standardized Kafka pipeline before ingestion into Elasticsearch, ClickHouse, or Datadog.
+4. **Real-Time Stream Processing**:
+   - Continuous transformation and enrichment of data in motion using frameworks like Apache Flink, Spark Streaming, or Kafka Streams (e.g., fraud detection on credit card swipes).
+5. **Metrics & IoT Ingestion**:
+   - Ingesting telemetry data from millions of IoT sensors, vehicles, or network devices for live dashboarding and alerting.
+6. **Event Sourcing & Audit Logs**:
+   - Storing state changes as an immutable sequence of events so an application state can be replayed and audited at any point in history.
+
+---
+
+## 4. Kafka vs. Traditional Message Queues (e.g. RabbitMQ)
+
+| Feature | Apache Kafka | Traditional Queue (RabbitMQ / SQS) |
+|---|---|---|
+| **Core Model** | Distributed Append-Only Commit Log | Smart broker, dumb consumer (Queue) |
+| **Message Retention** | Retained on disk for configured period (e.g., 7 days, infinite); replayable | Deleted immediately once acknowledged |
+| **Throughput** | Millions of messages/sec (zero-copy OS read) | Tens of thousands of messages/sec |
+| **Consumer Consumption** | Pull-based (Consumers pull using offsets) | Push-based (Broker pushes to workers) |
+| **Scaling Consumers** | Consumer groups map 1:1 to partitions | Multiple workers pull from same queue |
+| **Ideal For** | High-throughput event streams, analytics, event sourcing | Complex routing, task queues, immediate RPC |
+
+---
+
+## 5. Implementation Guide (`/kafka` folder)
+
+In this repository's [`/kafka`](./kafka) folder, we implement a **Rider Location Tracking System**:
+- Messages sent to location `North` are routed to **Partition 0**.
+- Messages sent to other locations (e.g., `South`) are routed to **Partition 1**.
+
+### Code Walkthrough
+
+#### 1. Client Configuration (`client.js`)
+Configures the `kafkajs` client with broker host, fast retry settings, and exports both `kafka` and `Kafka`:
 ```js
-const { Kafka } = require("kafkajs");
+const { Kafka, logLevel } = require("kafkajs");
 
-exports.kafka = new Kafka({
+const broker = (process.env.KAFKA_BROKER || "192.168.29.35:9092").replace(/^https?:\/\//, "");
+
+const kafka = new Kafka({
   clientId: "my-app",
-  brokers: ["<PRIVATE_IP>:9092"],
+  brokers: [broker],
+  logLevel: logLevel.ERROR,
+  retry: {
+    initialRetryTime: 100,
+    retries: 1,
+  },
 });
 
+exports.kafka = kafka;
+exports.Kafka = kafka;
 ```
-`admin.js`
+
+#### 2. Admin Script (`admin.js`)
+Connects to Kafka, creates the `rider-updates` topic with 2 partitions, and cleanly disconnects in a `finally` block:
 ```js
 const { kafka } = require("./client");
 
 async function init() {
   const admin = kafka.admin();
-  console.log("Admin connecting...");
-  admin.connect();
-  console.log("Adming Connection Success...");
+  try {
+    console.log("Admin is Connecting...");
+    await admin.connect();
+    console.log("Admin Connection Success...");
 
-  console.log("Creating Topic [rider-updates]");
-  await admin.createTopics({
-    topics: [
-      {
-        topic: "rider-updates",
-        numPartitions: 2,
-      },
-    ],
-  });
-  console.log("Topic Created Success [rider-updates]");
+    console.log("Creating Topic [rider-updates]");
+    const created = await admin.createTopics({
+      topics: [
+        {
+          topic: "rider-updates",
+          numPartitions: 2,
+        },
+      ],
+    });
 
-  console.log("Disconnecting Admin..");
-  await admin.disconnect();
+    if (created) {
+      console.log("Topic Created Successfully [rider-updates]");
+    } else {
+      console.log("Topic [rider-updates] already exists or was not created");
+    }
+  } catch (error) {
+    console.error("Admin encountered an error:", error.message || error);
+  } finally {
+    console.log("Disconnecting Admin...");
+    await admin.disconnect();
+    console.log("Admin Disconnected");
+  }
 }
 
 init();
 ```
-`producer.js`
+
+#### 3. Producer Script (`producer.js`)
+Interactive CLI prompt with input validation, graceful shutdown (`exit`, `Ctrl+C`), and partition routing:
 ```js
 const { kafka } = require("./client");
 const readline = require("readline");
@@ -1400,66 +1470,172 @@ const rl = readline.createInterface({
 async function init() {
   const producer = kafka.producer();
 
-  console.log("Connecting Producer");
-  await producer.connect();
-  console.log("Producer Connected Successfully");
+  try {
+    console.log("Connecting Producer...");
+    await producer.connect();
+    console.log("Producer Connected Successfully");
+    console.log("Enter updates in format: <riderName> <location> (e.g., 'tony north')");
+    console.log("Type 'exit' or press Ctrl+C to quit.\n");
 
-  rl.setPrompt("> ");
-  rl.prompt();
+    rl.setPrompt("> ");
+    rl.prompt();
 
-  rl.on("line", async function (line) {
-    const [riderName, location] = line.split(" ");
-    await producer.send({
-      topic: "rider-updates",
-      messages: [
-        {
-          partition: location.toLowerCase() === "north" ? 0 : 1,
-          key: "location-update",
-          value: JSON.stringify({ name: riderName, location }),
-        },
-      ],
+    rl.on("line", async function (line) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        rl.prompt();
+        return;
+      }
+
+      if (trimmed.toLowerCase() === "exit" || trimmed.toLowerCase() === "quit") {
+        rl.close();
+        return;
+      }
+
+      const parts = trimmed.split(/\s+/);
+      if (parts.length < 2) {
+        console.log("Invalid format. Please use: <riderName> <location> (e.g., 'tony north')");
+        rl.prompt();
+        return;
+      }
+
+      const [riderName, location] = parts;
+
+      try {
+        await producer.send({
+          topic: "rider-updates",
+          messages: [
+            {
+              partition: location.toLowerCase() === "north" ? 0 : 1,
+              key: "location-update",
+              value: JSON.stringify({ name: riderName, location }),
+            },
+          ],
+        });
+        console.log(`Sent update for ${riderName} at ${location} (partition ${location.toLowerCase() === "north" ? 0 : 1})`);
+      } catch (sendError) {
+        console.error("Failed to send message:", sendError.message || sendError);
+      }
+
+      rl.prompt();
+    }).on("close", async () => {
+      console.log("\nDisconnecting producer...");
+      try {
+        await producer.disconnect();
+        console.log("Producer disconnected successfully");
+      } catch (err) {
+        console.error("Error while disconnecting producer:", err.message || err);
+      }
+      process.exit(0);
     });
-  }).on("close", async () => {
-    await producer.disconnect();
-  });
+
+    process.on("SIGINT", () => rl.close());
+  } catch (error) {
+    console.error("Failed to initialize producer:", error.message || error);
+    rl.close();
+  }
 }
 
 init();
 ```
-`consumer.js`
+
+#### 4. Consumer Script (`consumer.js`)
+Validates the `groupId` command-line argument, subscribes to `rider-updates`, and performs graceful disconnect on `SIGINT`/`SIGTERM`:
 ```js
 const { kafka } = require("./client");
+
 const group = process.argv[2];
+
+if (!group) {
+  console.error("Error: Consumer groupId is required.");
+  console.error("Usage: node consumer.js <group-name>");
+  console.error("Example: node consumer.js user-1");
+  process.exit(1);
+}
 
 async function init() {
   const consumer = kafka.consumer({ groupId: group });
-  await consumer.connect();
 
-  await consumer.subscribe({ topics: ["rider-updates"], fromBeginning: true });
+  const shutdown = async () => {
+    console.log(`\nDisconnecting consumer group [${group}]...`);
+    try {
+      await consumer.disconnect();
+      console.log("Consumer disconnected successfully.");
+    } catch (err) {
+      console.error("Error during consumer disconnect:", err.message || err);
+    }
+    process.exit(0);
+  };
 
-  await consumer.run({
-    eachMessage: async ({ topic, partition, message, heartbeat, pause }) => {
-      console.log(
-        `${group}: [${topic}]: PART:${partition}:`,
-        message.value.toString()
-      );
-    },
-  });
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  try {
+    console.log(`Connecting consumer for group [${group}]...`);
+    await consumer.connect();
+    console.log(`Consumer connected for group [${group}]`);
+
+    await consumer.subscribe({ topics: ["rider-updates"], fromBeginning: true });
+    console.log(`Subscribed to topic [rider-updates]. Waiting for messages...`);
+
+    await consumer.run({
+      eachMessage: async ({ topic, partition, message, heartbeat, pause }) => {
+        console.log(
+          `${group}: [${topic}]: PART:${partition}:`,
+          message.value ? message.value.toString() : "<empty>"
+        );
+      },
+    });
+  } catch (error) {
+    console.error(`Consumer [${group}] encountered an error:`, error.message || error);
+    await shutdown();
+  }
 }
 
 init();
 ```
-## Running Locally
-- Run Multiple Consumers
+
+---
+
+## 6. How to Run
+
+### Method 1: Interactive Web Dashboard (Zero Docker Setup Required)
+Run the built-in web dashboard at `http://localhost:3000`:
 ```bash
-node consumer.js <GROUP_NAME>
+cd kafka
+npm install
+npm start
 ```
-- Create Producer
-```bash
-node producer.js
-```
-```bash
-> tony south
-> tony north
-```
- https://drive.google.com/file/d/1-_RDs6txMIypTiJ_WRPngVdCcqA0kUlj/view  
+- Open **`http://localhost:3000`** in your browser.
+- Create topics, publish messages via form, and watch real-time partition streams via Server-Sent Events (SSE).
+- Automatically detects live Kafka or runs in local simulation mode.
+
+### Method 2: Running via Terminal CLI with Docker
+1. **Start Kafka Cluster (KRaft Mode)**:
+   ```bash
+   docker run -p 9092:9092 bashj79/kafka-kraft
+   ```
+   *(Or using Zookeeper: `docker run -p 2181:2181 zookeeper` and `docker run -p 9092:9092 -e KAFKA_ZOOKEEPER_CONNECT=<IP>:2181 confluentinc/cp-kafka`)*
+
+2. **Create the Topic**:
+   ```bash
+   node admin.js
+   ```
+
+3. **Start Consumers (in separate terminals)**:
+   ```bash
+   node consumer.js group-1
+   node consumer.js group-2
+   ```
+
+4. **Send Messages via Producer**:
+   ```bash
+   node producer.js
+   > tony north
+   > bruce south
+   ```
+
+---
+### Tutorial Reference Link
+- [Kafka Video Reference Link](https://drive.google.com/file/d/1-_RDs6txMIypTiJ_WRPngVdCcqA0kUlj/view)
+
