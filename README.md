@@ -1638,4 +1638,3 @@ npm start
 ---
 ### Tutorial Reference Link
 - [Kafka Video Reference Link](https://drive.google.com/file/d/1-_RDs6txMIypTiJ_WRPngVdCcqA0kUlj/view)
-
